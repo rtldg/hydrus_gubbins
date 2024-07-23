@@ -10,3 +10,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.22.0"
+
+# These are used for the "generating additional hashes" speedup:
+# TODO: Check if openssl's implementations are worth importing...
+memmap2 = "0.9.4"
+digest = "0.10.6"
+md-5 = "0.10.6"
+sha1 = "0.10.6"
+# sha2 = "0.10.6" # for sha512 # we actually use ring instead since it's faster...
+ring = "0.17.8"
