@@ -32,6 +32,9 @@ speed up "generating similar files metadata"
 	hydrus\client\ClientImageHandling.py
 		GenerateShapePerceptualHashes
 speed up "generating thumbnail"?
+
+
+TODO: cache the file & mmap between functions in case we reuse it...
 */
 
 #[pyfunction]
@@ -70,18 +73,12 @@ fn generate_additional_hashes<'p>(py: Python<'p>, path: String) -> PyResult<Boun
 		Ok::<(), std::io::Error>(())
 	})?;
 
-	let digest_md5 = hash_md5.finalize();
-	let digest_sha1 = hash_sha1.finalize();
-	// let digest_sha512 = hash_sha512.finalize();
-	let hash_sha512 = hash_sha512.unwrap();
-	let digest_sha512 = hash_sha512.as_ref();
-
 	Ok(PyTuple::new_bound(
 		py,
 		[
-			PyBytes::new_bound(py, &digest_md5),
-			PyBytes::new_bound(py, &digest_sha1),
-			PyBytes::new_bound(py, &digest_sha512),
+			PyBytes::new_bound(py, &hash_md5.finalize()),
+			PyBytes::new_bound(py, &hash_sha1.finalize()),
+			PyBytes::new_bound(py, hash_sha512.unwrap().as_ref()),
 		],
 	))
 }
