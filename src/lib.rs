@@ -42,8 +42,8 @@ TODO: cache the file & mmap between functions in case we reuse it...
 TODO: swap out hydrus's JSON library with something faster like https://github.com/ijl/orjson
 */
 
-static RUNTIME: once_cell::sync::Lazy<tokio::runtime::Runtime> =
-	once_cell::sync::Lazy::new(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap());
+static RUNTIME: std::sync::LazyLock<tokio::runtime::Runtime> =
+	std::sync::LazyLock::new(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap());
 
 struct ExtraHashes {
 	md5: [u8; 16],
