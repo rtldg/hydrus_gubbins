@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use pyo3::{prelude::*, types::PyBytes, types::PyTuple};
+use pyo3::{
+	prelude::*,
+	types::{PyBytes, PyTuple},
+};
 
 use digest::Digest;
 use tokio::sync::oneshot;
@@ -18,6 +21,7 @@ https://github.com/PyO3/maturin-action
 
 https://github.com/PyO3/setuptools-rust
 
+https://github.com/PyO3/pyo3-built
 
 https://hydrusnetwork.github.io/hydrus/running_from_source.html
 
@@ -55,8 +59,17 @@ struct FileInfo {
 	file: Arc<std::fs::File>,
 	mmap: Arc<memmap2::Mmap>,
 
-	thumbnail_receiver: Option<oneshot::Receiver<()>>,
+	path: String,
+	mime: String,
+	width: Option<u64>,
+	height: Option<u64>,
+	duration_in_ms: Option<u64>,
+	num_frames: Option<u64>,
+
+	extra_hashes: Option<ExtraHashes>,
 	extra_hashes_receiver: Option<oneshot::Receiver<ExtraHashes>>,
+
+	thumbnail_receiver: Option<oneshot::Receiver<()>>,
 	perceptual_hash_receiver: Option<oneshot::Receiver<()>>,
 	image_pixel_hash_receiver: Option<oneshot::Receiver<()>>,
 }
@@ -64,25 +77,62 @@ struct FileInfo {
 #[pymethods]
 impl FileInfo {
 	#[new]
-	fn new(py: Python<'_>, path: String, mime: String) -> PyResult<Self> {
-		// allow_threads() to release the GIL while we do stuff...
-		let (file, mmap) = py.allow_threads(|| {
-			let file = Arc::new(std::fs::File::open(path)?);
-			let mmap = Arc::new(unsafe { memmap2::Mmap::map(&*file)? });
-			Ok((file, mmap))
-		})?;
+	fn new(
+		py: Python<'_>,
+		path: String,
+		mime: String,
+		width: &Bound<'_, PyAny>,
+		height: &Bound<'_, PyAny>,
+		duration_in_ms: &Bound<'_, PyAny>,
+		num_frames: &Bound<'_, PyAny>,
+	) -> PyResult<Self> {
+		let width = width.extract::<Option<u64>>()?;
+		let height = height.extract::<Option<u64>>()?;
+		let duration_in_ms = duration_in_ms.extract::<Option<u64>>()?;
+		let num_frames = num_frames.extract::<Option<u64>>()?;
 
-		let (hash_tx, hash_rx) = oneshot::channel();
-		RUNTIME.spawn({
-			let file = file.clone();
-			let mmap = mmap.clone();
-			async {
-				FileInfo::queue_extra_hashes(&file, mmap, hash_tx).await;
+		py.allow_threads(|| {
+			let file = Arc::new(std::fs::File::open(&path)?);
+			let mmap = Arc::new(unsafe { memmap2::MmapOptions::new().populate().map(&*file)? });
+			let (hash_tx, hash_rx) = oneshot::channel();
+
+			RUNTIME.spawn({
+				let file = file.clone();
+				let mmap = mmap.clone();
+				async move {
+					FileInfo::queue_extra_hashes(&file, mmap, hash_tx).await;
+				}
+			});
+
+			Ok(Self {
+				file,
+				mmap,
+
+				path,
+				mime,
+				width,
+				height,
+				duration_in_ms,
+				num_frames,
+
+				extra_hashes: None,
+				extra_hashes_receiver: Some(hash_rx),
+
+				thumbnail_receiver: None,
+				perceptual_hash_receiver: None,
+				image_pixel_hash_receiver: None,
+			})
+			// Err(pyo3::exceptions::PyTypeError::new_err("Error message"))
+		})
+	}
+
+	fn get_extra_hashes<'p>(&mut self, py: Python<'p>) -> PyResult<Bound<'p, PyTuple>> {
+		py.allow_threads(|| {
+			if let Some(receiver) = self.extra_hashes_receiver.take() {
+				self.extra_hashes = Some(receiver.blocking_recv().unwrap());
 			}
 		});
-	}
-	fn get_extra_hashes<'p>(&mut self, py: Python<'p>) -> PyResult<Bound<'p, PyTuple>> {
-		let extra_hashes = self.extra_hashes_receiver.take().unwrap().blocking_recv().unwrap();
+		let extra_hashes = self.extra_hashes.as_ref().unwrap();
 		Ok(PyTuple::new_bound(
 			py,
 			[
@@ -117,20 +167,8 @@ impl FileInfo {
 	}
 }
 
-#[pyfunction]
-fn generate_additional_hashes<'p>(py: Python<'p>, path: String) -> PyResult<()> {
-	py.allow_threads(|| {
-		let file = std::fs::File::open(path)?;
-		let mmap = unsafe { memmap2::Mmap::map(&file)? };
-
-		Ok::<(), std::io::Error>(())
-	})?;
-	Ok(())
-}
-
 #[pymodule]
 fn hydrus_gubbins(m: &Bound<'_, PyModule>) -> PyResult<()> {
 	m.add_class::<FileInfo>()?;
-	// m.add_function(wrap_pyfunction!(generate_additional_hashes, m)?)?;
 	Ok(())
 }
